@@ -1,0 +1,227 @@
+---
+title: "Exercise 2"
+author: "Bonfante"
+date: "August 14, 2015"
+output: word_document
+---
+
+#Flights at ABIA
+
+Here we will create a plot to display which months have the highest rate of cancellations.  Therefore it will not simply be a count of the cancellations per month but rather a ratio of the total cancellation divided by the total flights in that month in order to give more descriptive results.
+
+```{r}
+library(ggplot2)
+#Read in the data
+flights = read.csv('ABIA.csv', header = TRUE)
+#select 'month' and 'Cancelled' columns
+flights = flights[,c(2,22)]
+
+#sum cancellations grouped by month
+aggflights = aggregate(Cancelled ~ Month ,flights, sum)
+class(aggflights)
+
+#create a count function
+count = function(x) {
+  length(x)
+}
+
+#count the total flights per month and add it to a new column
+flightspermonth = aggregate(Cancelled ~ Month ,flights, count)
+flightspermonth$Totalflights = flightspermonth$Cancelled
+df = cbind.data.frame(aggflights, flightspermonth$Totalflights)
+
+#Rename the column so it looks cleaner
+names(df)[3] = paste('Totalflights')
+df
+
+#Divide Total cancellations per month by total flights and make it a new column called 'Ratio'
+df = transform(df, Ratio = Cancelled / Totalflights)
+
+#Plot 'Ratio' on y-axis and 'Month' on x-axis
+plot(df$Month, df$Ratio)
+```
+Now we can see which months have the highest Cancellation percentage. The High is in March with over 2.5% of flights being cancelled, and the minimum is during November with less than .5% of flights being cancelled. As the year progresses cancellations tend to decrease other than a large spike in cancellations during the month of September. 
+
+
+
+
+#Author Attribution
+
+First import libraries and define our reader function
+```{r}
+#Import Libraries
+library(tm)
+library(randomForest)
+library(e1071)
+library(rpart)
+library(ggplot2)
+library(caret)
+
+
+#reader function
+readerPlain = function(fname){
+  readPlain(elem=list(content=readLines(fname)), id=fname, language='en') }
+```
+
+First we will create our training matrix
+
+```{r}
+author_dirs = Sys.glob('./ReutersC50/C50train/*')
+file_list = NULL #list of file directories
+train_labels = NULL #List of author names
+for(author in author_dirs) {
+  author_name = substring(author, first=23)
+  files_to_add = Sys.glob(paste0(author, '/*.txt'))
+  file_list = append(file_list, files_to_add)
+  train_labels = append(train_labels, rep(author_name, length(files_to_add)))
+}
+
+# clean names
+all_docs = lapply(file_list, readerPlain) #Read in all docs
+names(all_docs) = file_list 
+names(all_docs) = sub('.txt', '', names(all_docs))
+
+#Initialize Training Corpus
+train_corpus = Corpus(VectorSource(all_docs)) 
+names(train_corpus) = file_list
+
+#Tokenization of training Corpus
+#all lower
+train_corpus = tm_map(train_corpus, content_transformer(tolower))
+#No numbers
+train_corpus = tm_map(train_corpus, content_transformer(removeNumbers))
+#No puncuation
+train_corpus = tm_map(train_corpus, content_transformer(removePunctuation)) 
+#No whitespace
+train_corpus = tm_map(train_corpus, content_transformer(stripWhitespace)) 
+#No Stopwords
+train_corpus = tm_map(train_corpus, content_transformer(removeWords), stopwords("SMART"))
+
+#Create training DTM
+DTM_train = DocumentTermMatrix(train_corpus)
+class(DTM_train)
+DTM_train = removeSparseTerms(DTM_train, 0.96)
+DTM_train_matrix = as.matrix(DTM_train)
+```
+
+Here we will create the testing corpus
+
+```{r}
+author_dirs = Sys.glob('./ReutersC50/C50test/*')
+file_list = NULL
+test_labels = NULL
+for(author in author_dirs) {
+  author_name = substring(author, first=22)
+  files_to_add = Sys.glob(paste0(author, '/*.txt'))
+  file_list = append(file_list, files_to_add)
+  test_labels = append(test_labels, rep(author_name, length(files_to_add)))
+}
+
+# Clean names
+all_docs = lapply(file_list, readerPlain) 
+names(all_docs) = file_list
+names(all_docs) = sub('.txt', '', names(all_docs))
+
+#Initialize Testing Corpus
+test_corpus = Corpus(VectorSource(all_docs))
+names(test_corpus) = file_list
+
+#Tokenization of Testing Corpus
+test_corpus = tm_map(test_corpus, content_transformer(tolower)) 
+test_corpus = tm_map(test_corpus, content_transformer(removeNumbers)) 
+test_corpus = tm_map(test_corpus, content_transformer(removePunctuation)) 
+test_corpus = tm_map(test_corpus, content_transformer(stripWhitespace)) 
+test_corpus = tm_map(test_corpus, content_transformer(removeWords), stopwords("SMART"))
+
+#Create a dictionary to pull column names from training matrix
+train_names_dict = NULL
+train_names_dict = dimnames(DTM_train)[[2]]
+class(train_names_dict)
+
+#Create testing DTM & matrix with training words only
+DTM_test = DocumentTermMatrix(test_corpus, list(dictionary=train_names_dict))
+#DTM_test = removeSparseTerms(DTM_test, 0.975)
+DTM_test_matrix = as.matrix(DTM_test)
+
+#confirm that DTM_test & DTM_train have the same column names
+x = colnames(DTM_train)
+y = colnames(DTM_test)
+c = cbind(x,y)
+#c
+
+```
+
+Now that we have defined and cleaned both our training and testing matrices we can run Naive Bayes and calculate the models accuracy at predicting document authors.
+
+```{r}
+#Create the model
+NB_model = naiveBayes(x = DTM_train_matrix, y = as.factor(train_labels))
+#Use the model to get prediction values
+pred = predict(NB_model, DTM_test_matrix)
+#Use confus]ion matrix to measure model accuracy
+confusion_matrix = confusionMatrix(table(pred, train_labels))
+confusion_matrix$overall
+
+table_NB = as.data.frame(table(pred,train_labels))
+```
+After running Naive Bayes with Sparsity set to 96%, we got a model accuracy of 24.6%. Although this is not incredible accuracy it is not terrible, and could possibly be improved by using different values for word sparsity.
+
+Plot the Naive Bayes Model
+```{r}
+plot = ggplot(table_NB)
+plot + geom_tile(aes(x=train_labels, y=pred, fill=Freq)) + 
+    scale_x_discrete(name="Actual Class") + 
+    scale_y_discrete(name="Predicted Class") +
+    theme(axis.text.x = element_text(angle = 90, hjust = 1))
+```
+By looking at the calculated plot, you can see that it is dificult to distinguish Roger Filion, Lynn O'donnel, and Edna Fernandez's documents from other others as they were consistently incorrectly predicted.
+
+Now we try to predict authors using a random Forest Model.
+```{r}
+
+randomforest = randomForest(x= DTM_train_matrix, y= as.factor(train_labels), mtry = 5, ntree=200)
+
+rfpredict = predict(randomforest, data = DTM_test_matrix)
+
+confusionrf = confusionMatrix(table(rfpredict, test_labels))
+confusionrf$overall
+
+
+table_RF = as.data.frame(table(rfpredict,train_labels))
+rfplot = ggplot(table_RF)
+rfplot + geom_tile(aes(x=train_labels, y=rfpredict, fill=Freq)) + 
+    scale_x_discrete(name="Actual") + 
+    scale_y_discrete(name="Predicted") +
+    theme(axis.text.x = element_text(angle = 90, hjust = 1))
+```
+The Random forrest model performed MUCH beter than Naive Bayes with 69.7% accuracy. Since our Matrices already had the same word columns we were able to quicky write the code to compute RF. We allowed 5 words per decision tree, 200 times. This time the graph shows a much cleaned prediction through the diagonal line. The scattered light squares around this line are icorrect predictions.
+
+
+#Practice with association rule mining
+
+```{r}
+library(arules)
+# Read in the data
+groceries <- read.transactions("groceries.txt", format = 'basket', sep = ',')
+```
+
+
+```{r}
+#Run apriori on dataset
+groceriesrules <- apriori(groceries, parameter=list(support=.01, confidence=.5, maxlen=5))
+                         
+# Look at the output
+arules::inspect(groceriesrules)
+```
+
+```{r}
+#inspect using different arguments
+#arules::inspect(subset(groceriesrules, subset=lift > 2))
+#arules::inspect(subset(groceriesrules, subset=confidence > 0.5))
+arules::inspect(subset(groceriesrules, subset=support > .01 & confidence > 0.5))
+```
+
+After playing around with different pareameters we were able to find a balance in which a concise set of rules were shown. These for the most part seem to make sense especially the first five which say there is high confidence when group various dairy product with whole milk as one might naturally expect.
+
+
+
